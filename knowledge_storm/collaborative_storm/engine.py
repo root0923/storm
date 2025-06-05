@@ -18,7 +18,9 @@ from ..encoder import Encoder
 from ..interface import LMConfigs, Agent
 from ..logging_wrapper import LoggingWrapper
 from ..lm import LitellmModel
-from ..rm import BingSearch
+from ..rm import SerperRM
+import re
+from .modules.chinese_utils import clean_chinese_output
 
 
 class CollaborativeStormLMConfigs(LMConfigs):
@@ -202,7 +204,7 @@ class RunnerArgument:
         metadata={
             "help": "Maximum number of search queries to consider for each question."
         },
-    )
+    ) # 回答当前问题最多考虑的查询语句个数
     total_conv_turn: int = field(
         default=20,
         metadata={"help": "Maximum number turn in conversation."},
@@ -214,11 +216,11 @@ class RunnerArgument:
     max_search_queries_per_turn: int = field(
         default=3,
         metadata={"help": "Maximum number of search queries to consider in each turn."},
-    )
+    ) # difference with max_search_queries?
     warmstart_max_num_experts: int = field(
         default=3,
         metadata={
-            "help": "Max number of experts in perspective guided QA in warm start process"
+            "help": "Madifferencx number of experts in perspective guided QA in warm start process"
         },
     )
     warmstart_max_turn_per_experts: int = field(
@@ -230,7 +232,7 @@ class RunnerArgument:
         metadata={
             "help": "Max number thread for parallel perspective guided QA in warm start process"
         },
-    )
+    ) # 同时提问不同expert
     max_thread_num: int = field(
         default=10,
         metadata={
@@ -253,7 +255,7 @@ class RunnerArgument:
         metadata={
             "help": "Trigger node expansion for node that contain more than N snippets"
         },
-    )
+    ) # 触发节点扩展的阈值
     disable_moderator: bool = field(
         default=False,
         metadata={"help": "If True, disable moderator."},
@@ -427,9 +429,16 @@ class DiscourseManager:
             expert_descriptions = [expert_descriptions]
         agents: CoStormExpert = []
         for expert_name in expert_descriptions:
-            role_name, role_description = expert_name.split(":")
-            role_name = role_name.strip()
-            role_description = role_description.strip()
+            # 支持中英文冒号分割
+            colon_pattern = r'[：:]'
+            if re.search(colon_pattern, expert_name):
+                parts = re.split(colon_pattern, expert_name, 1)
+                role_name = parts[0].strip()
+                role_description = parts[1].strip() if len(parts) > 1 else ""
+            else:
+                role_name = expert_name.strip()
+                role_description = ""
+                
             new_costorm_expert = CoStormExpert(
                 topic=self.runner_argument.topic,
                 role_name=role_name,
@@ -510,16 +519,17 @@ class CoStormRunner:
         logging_wrapper: LoggingWrapper,
         rm: Optional[dspy.Retrieve] = None,
         callback_handler: BaseCallbackHandler = None,
+        encoder: Optional[Encoder] = None,
     ):
         self.runner_argument = runner_argument
         self.lm_config = lm_config
         self.logging_wrapper = logging_wrapper
         self.callback_handler = callback_handler
         if rm is None:
-            self.rm = BingSearch(k=runner_argument.retrieve_top_k)
+            self.rm = SerperRM(k=runner_argument.retrieve_top_k)
         else:
             self.rm = rm
-        self.encoder = Encoder()
+        self.encoder = encoder if encoder is not None else Encoder()
         self.conversation_history = []
         self.warmstart_conv_archive = []
         self.knowledge_base = KnowledgeBase(
@@ -551,6 +561,7 @@ class CoStormRunner:
             "knowledge_base": self.knowledge_base.to_dict(),
         }
 
+    # 没有调用？
     @classmethod
     def from_dict(cls, data, callback_handler: BaseCallbackHandler = None):
         # FIXME: does not use the lm_config data but naively use default setting
@@ -727,6 +738,12 @@ class CoStormRunner:
                         knowledge_base=self.knowledge_base,
                         conversation_history=self.conversation_history,
                     )
+                    
+                    # 🔴 清理生成的对话内容中的think标签和元认知内容
+                    if conv_turn and conv_turn.utterance:
+                        conv_turn.utterance = clean_chinese_output(conv_turn.utterance)
+                    if conv_turn and conv_turn.raw_utterance:
+                        conv_turn.raw_utterance = clean_chinese_output(conv_turn.raw_utterance)
 
                 if turn_policy.should_update_experts_list:
                     with self.logging_wrapper.log_event(

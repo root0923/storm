@@ -37,8 +37,15 @@ class ConversationTurn:
     ):
         self.utterance = utterance if utterance is not None else raw_utterance
         self.raw_utterance = raw_utterance
-        self.role = role if ":" not in role else role.split(":")[0]
-        self.role_description = "" if ":" not in role else role.split(":")[1]
+        colon_pattern = r'[：:]'  # 匹配中文或英文冒号
+        if re.search(colon_pattern, role):
+            # 使用正则表达式分割，支持中英文冒号
+            parts = re.split(colon_pattern, role, 1)
+            self.role = parts[0].strip()
+            self.role_description = parts[1].strip() if len(parts) > 1 else ""
+        else:
+            self.role = role
+            self.role_description = ""
         self.queries = queries if queries is not None else []
         self.raw_retrieved_info = (
             raw_retrieved_info if raw_retrieved_info is not None else []
@@ -524,7 +531,7 @@ class KnowledgeBase:
             level = line.count("#")
             if level > 0:
                 title = line.strip("# ").strip()
-                if title.lower() in ["overview", "summary", "introduction"]:
+                if title.lower() in ["背景信息", "背景介绍"]:
                     continue
                 parent_node = None if level == 1 else last_node_at_level.get(level - 1)
                 new_node = self.insert_node(
@@ -834,16 +841,102 @@ class KnowledgeBase:
           ensuring that each concept remains specific and manageable.
         2.Bottom-Up Cleaning: Cleans the knowledge base by removing empty leaf nodes (nodes with no supporting information)
           and merging nodes that have only a single child, simplifying the structure and maintaining clarity.
+        3.Similar Topic Grouping: Groups similar root-level topics under appropriate parent categories.
         """
         # pre-processing
         self.trim_empty_leaf_nodes()
         self.merge_single_child_nodes()
+        
+        # 🔴 新增：合并相似主题的根级节点
+        self._group_similar_root_topics()
+        
         # expand nodes
         self.expand_node_module(knowledge_base=self)
         # clean up
         self.trim_empty_leaf_nodes()
         self.merge_single_child_nodes()
         self.update_all_info_path()
+
+    def _group_similar_root_topics(self):
+        """
+        识别并合并相似主题的根级节点。
+        特别针对同一应用领域（如医疗AI、工业AI等）的多个根节点进行归类。
+        """
+        if len(self.root.children) <= 2:
+            return  # 如果根节点下只有1-2个子节点，无需合并
+        
+        # 定义相似主题的模式
+        medical_ai_patterns = ['医疗AI', '医疗人工智能', '临床', '诊断', '医院', '患者', '医学']
+        industry_ai_patterns = ['工业AI', '制造业', '生产', '工厂', '自动化']
+        education_ai_patterns = ['教育AI', '学习', '教学', '课程', '学生']
+        
+        # 收集需要重组的节点
+        medical_nodes = []
+        industry_nodes = []
+        education_nodes = []
+        other_nodes = []
+        
+        for child in self.root.children:
+            node_name = child.name.lower()
+            if any(pattern in node_name for pattern in medical_ai_patterns):
+                medical_nodes.append(child)
+            elif any(pattern in node_name for pattern in industry_ai_patterns):
+                industry_nodes.append(child)
+            elif any(pattern in node_name for pattern in education_ai_patterns):
+                education_nodes.append(child)
+            else:
+                other_nodes.append(child)
+        
+        # 如果有2个或以上的医疗AI相关节点，将它们合并
+        if len(medical_nodes) >= 2:
+            self._merge_nodes_under_parent(medical_nodes, "医疗AI发展与应用")
+        
+        # 如果有2个或以上的工业AI相关节点，将它们合并
+        if len(industry_nodes) >= 2:
+            self._merge_nodes_under_parent(industry_nodes, "工业AI发展与应用")
+        
+        # 如果有2个或以上的教育AI相关节点，将它们合并
+        if len(education_nodes) >= 2:
+            self._merge_nodes_under_parent(education_nodes, "教育AI发展与应用")
+
+    def _merge_nodes_under_parent(self, nodes_to_merge, parent_name):
+        """
+        将一组节点合并到一个新的父节点下
+        
+        Args:
+            nodes_to_merge: 需要合并的节点列表
+            parent_name: 新父节点的名称
+        """
+        if len(nodes_to_merge) < 2:
+            return
+        
+        # 创建新的父节点
+        parent_node = self.insert_node(
+            new_node_name=parent_name,
+            parent_node=self.root,
+            duplicate_handling="skip"
+        )
+        
+        # 将节点移动到新父节点下
+        for node in nodes_to_merge:
+            # 从root的children中移除
+            if node in self.root.children:
+                self.root.children.remove(node)
+            
+            # 添加到新父节点下
+            node.parent = parent_node
+            if node not in parent_node.children:
+                parent_node.children.append(node)
+            
+            # 更新节点名称，去除重复的前缀
+            original_name = node.name
+            # 移除医疗AI等前缀，使子节点名称更简洁
+            for prefix in ["医疗AI", "医疗人工智能", "工业AI", "教育AI"]:
+                if original_name.startswith(prefix):
+                    simplified_name = original_name[len(prefix):].strip()
+                    if simplified_name and not simplified_name.startswith(("的", "中", "在")):
+                        node.name = simplified_name
+                    break
 
     def to_report(self):
         return self.article_generation_module(knowledge_base=self)

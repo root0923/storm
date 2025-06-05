@@ -60,6 +60,7 @@ class Encoder:
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
         api_version: Optional[str] = None,
+        embedding_config: Optional[Dict] = None,
     ):
         """
         Initializes the Encoder with the appropriate embedding model.
@@ -69,10 +70,14 @@ class Encoder:
             api_key (Optional[str]): API key for the encoder service.
             api_base (Optional[str]): API base URL for the encoder service.
             api_version (Optional[str]): API version for the encoder service.
+            embedding_config (Optional[Dict]): Custom embedding configuration.
         """
         self.embedding_model_name = None
         self.kargs = {}
         self.total_token_usage = 0
+        
+        # Store embedding config for custom embedding service
+        self.embedding_config = embedding_config or {}
 
         # Initialize the appropriate embedding model
         encoder_type = encoder_type or os.getenv("ENCODER_API_TYPE")
@@ -122,12 +127,27 @@ class Encoder:
         return self._get_text_embeddings(texts, max_workers=max_workers)
 
     def _get_single_text_embedding(self, text):
-        response = litellm.embedding(
-            model=self.embedding_model_name, input=text, caching=True, **self.kargs
+        from openai import OpenAI
+        
+        # Use custom embedding config if provided, otherwise use default values
+        api_key = self.embedding_config.get('api_key', '')
+        api_base = self.embedding_config.get('api_base', '')
+        model = self.embedding_config.get('model', 'text-embedding-v3')
+        encoding_format = self.embedding_config.get('encoding_format', 'float')
+        
+        client = OpenAI(base_url=api_base, api_key=api_key)
+        text = text.replace("\n", " ")
+        response = client.embeddings.create(
+            input=[text], 
+            model=model, 
+            encoding_format=encoding_format
         )
-        embedding = response.data[0]["embedding"]
-        token_usage = response.get("usage", {}).get("total_tokens", 0)
-        return text, embedding, token_usage
+        #debug_log(response)
+        embedding_result = response.data[0].embedding
+        #debug_log(embedding_result)
+        token_usage = response.usage.total_tokens
+        # debug_log(token_usage)
+        return text, embedding_result, token_usage
 
     def _get_text_embeddings(
         self,

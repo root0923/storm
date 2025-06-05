@@ -1,10 +1,14 @@
 import dspy
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Set, Union
+from typing import Set, Union, List
+import re
 
-from .collaborative_storm_utils import clean_up_section
+from .callback import BaseCallbackHandler
+from .collaborative_storm_utils import trim_output_after_hint
 from ...dataclass import KnowledgeBase, KnowledgeNode
-
+from ...logging_wrapper import LoggingWrapper
+from ...utils import ArticleTextProcessing
+from ...interface import Information
 
 class ArticleGenerationModule(dspy.Module):
     """Use the information collected from the information-seeking conversation to write a section."""
@@ -52,11 +56,14 @@ class ArticleGenerationModule(dspy.Module):
             all_citation_index=all_citation_index, knowledge_base=knowledge_base
         )
         with dspy.settings.context(lm=self.engine):
-            synthesize_output = clean_up_section(
-                self.write_section(
-                    topic=topic, info=information, section=node.name
-                ).output
-            )
+            synthesize_output = self.write_section(
+                topic=topic, info=information, section=node.name
+            ).output
+            # 使用中文文本清理函数
+            text = re.sub(r'<think>.*?</think>', '', synthesize_output, flags=re.DOTALL)
+            text = re.sub(r'<think>', '', text)
+            synthesize_output = re.sub(r'</think>', '', text)
+            synthesize_output = ArticleTextProcessing.remove_uncompleted_sentences_with_citations(synthesize_output)
         node.synthesize_output = synthesize_output
         node.need_regenerate_synthesize_output = False
         return node.synthesize_output
@@ -108,16 +115,21 @@ class ArticleGenerationModule(dspy.Module):
 
 
 class WriteSection(dspy.Signature):
-    """Write a Wikipedia section based on the collected information. You will be given the topic, the section you are writing and relevant information.
-    Each information will be provided with the raw content along with question and query lead to that information.
-    Here is the format of your writing:
-    Use [1], [2], ..., [n] in line (for example, "The capital of the United States is Washington, D.C.[1][3]."). You DO NOT need to include a References or Sources section to list the sources at the end.
+    """基于收集的信息撰写维基百科风格的中文章节内容。您将得到主题、要撰写的章节名称和相关信息。
+    每条信息都会提供原始内容以及导致该信息的问题和查询。
+    
+    重要格式要求：
+    1. 请直接撰写章节的正文内容，不要包含章节标题（系统会自动添加标题）
+    2. 使用[1]、[2]、...、[n]进行行内引用（例如："美国的首都是华盛顿特区[1][3]。"）
+    3. 请用简体中文撰写，内容要准确、流畅、符合中文表达习惯
+    4. 不要在文章末尾包含参考文献或来源部分
+    5. 不要以"#"开头写标题，直接写正文内容即可
     """
 
-    info = dspy.InputField(prefix="The collected information:\n", format=str)
-    topic = dspy.InputField(prefix="The topic of the page: ", format=str)
-    section = dspy.InputField(prefix="The section you need to write: ", format=str)
+    info = dspy.InputField(prefix="收集的信息：\n", format=str)
+    topic = dspy.InputField(prefix="页面主题：", format=str)
+    section = dspy.InputField(prefix="需要撰写的章节：", format=str)
     output = dspy.OutputField(
-        prefix="Write the section with proper inline citations (Start your writing. Don't include the page title, section name, or try to write other sections. Do not start the section with topic name.):\n",
+        prefix="请用简体中文撰写这个章节的正文内容，包含适当的行内引用（注意：不要包含标题，直接写正文内容即可）：\n",
         format=str,
     )

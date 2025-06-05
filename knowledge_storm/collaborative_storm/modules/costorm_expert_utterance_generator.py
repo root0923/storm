@@ -7,7 +7,8 @@ from .collaborative_storm_utils import (
     extract_and_remove_citations,
     keep_first_and_last_paragraph,
 )
-
+from .chinese_utils import clean_chinese_output
+from ...utils import ArticleTextProcessing
 from .grounded_question_answering import AnswerQuestionModule
 from .grounded_question_generation import ConvertUtteranceStyle
 from ...dataclass import ConversationTurn
@@ -16,28 +17,34 @@ from ...logging_wrapper import LoggingWrapper
 
 class GenExpertActionPlanning(dspy.Signature):
     """
-    You are an invited speaker in the round table conversation. Your task is to make a very short note to your assistant to help you prepare for your turn in the conversation.
-    You will be given the topic we are discussing, your expertise, and the conversation history.
-    Take a look at conversation history, especially last few turns, then let your assistant prepare the material for you with one of following ways.
-    1. Original Question: Initiates a new question to other speakers.
-        2. Further Details: Provides additional information.
-        3. Information Request: Requests information from other speakers.
-        4. Potential Answer: Offers a possible solution or answer.
+    【重要】：请使用简体中文进行思考和回答。
+    
+    您是圆桌对话中的受邀发言人。您的任务是为助手做一个简短备注，以帮助您准备下一轮对话。
+    您将得到我们正在讨论的主题、您的专业领域以及对话历史。
+    查看对话历史，特别是最近几轮，然后让您的助手用以下方式之一为您准备材料：
+    1. Original Question：向其他发言人提出新问题
+    2. Further Details：提供额外信息
+    3. Information Request：向其他发言人请求信息
+    4. Potential Answer：提供可能的解决方案或答案
 
-    Strictly follow this format: [type of contribution]: [one sentence description]. For example, Original Question: [description]
+    【严格禁止】：
+    - 不得出现<think>标签或英文思考内容
+    - 不得输出内部思考过程
+    - 直接给出备注内容
+
+    严格要求：必须使用简体中文回答，严格按照此格式：[贡献类型]：[一句话描述]。例如，Further Details：[描述]
     """
 
-    topic = dspy.InputField(prefix="topic of discussion: ", format=str)
-    expert = dspy.InputField(prefix="You are inivited as: ", format=str)
-    summary = dspy.InputField(prefix="Discussion history: \n", format=str)
+    topic = dspy.InputField(prefix="讨论主题：", format=str)
+    expert = dspy.InputField(prefix="您受邀的身份：", format=str)
+    summary = dspy.InputField(prefix="讨论历史：\n", format=str)
     last_utterance = dspy.InputField(
-        prefix="Last utterance in the conversation: \n", format=str
+        prefix="对话中的最后一次发言：\n", format=str
     )
     resposne = dspy.OutputField(
-        prefix="Now give your note. Start with one of [Original Question, Further Details, Information Request, Potential Answer] with one sentence description\n",
+        prefix="现在给出您的备注。以[Original Question, Further Details, Information Request, Potential Answer]之一开头，并附上一句话描述\n",
         format=str,
     )
-
 
 class CoStormExpertUtteranceGenerationModule(dspy.Module):
     def __init__(
@@ -64,10 +71,18 @@ class CoStormExpertUtteranceGenerationModule(dspy.Module):
             "Potential Answer",
         ]
         for action_type in action_types:
+            # 检查英文冒号
             if f"{action_type}:" in action:
                 return action_type, trim_output_after_hint(action, f"{action_type}:")
+            # 检查中文冒号
+            elif f"{action_type}：" in action:
+                return action_type, trim_output_after_hint(action, f"{action_type}：")
+            # 检查方括号+英文冒号
             elif f"[{action_type}]:" in action:
                 return action_type, trim_output_after_hint(action, f"[{action_type}]:")
+            # 检查方括号+中文冒号
+            elif f"[{action_type}]：" in action:
+                return action_type, trim_output_after_hint(action, f"[{action_type}]：")        
         return "Undefined", ""
 
     def polish_utterance(
@@ -82,7 +97,7 @@ class CoStormExpertUtteranceGenerationModule(dspy.Module):
                 lm=self.utterance_polishing_lm, show_guidelines=False
             ):
                 action_string = (
-                    f"{action_type} about: {conversation_turn.claim_to_make}"
+                    f"{action_type}：{conversation_turn.claim_to_make}"
                 )
                 if action_type in ["Original Question", "Information Request"]:
                     action_string = f"{action_type}"
@@ -98,6 +113,11 @@ class CoStormExpertUtteranceGenerationModule(dspy.Module):
                     prev=trimmed_last_expert_utterance,
                     content=conversation_turn.raw_utterance,
                 ).utterance
+                
+                # 🔴 清理生成的utterance中的think标签和元认知内容
+                utterance = clean_chinese_output(utterance)
+                utterance = ArticleTextProcessing.remove_uncompleted_sentences_with_citations(utterance)
+                
             conversation_turn.utterance = utterance
 
     def forward(
@@ -127,6 +147,10 @@ class CoStormExpertUtteranceGenerationModule(dspy.Module):
                         summary=conversation_summary,
                         last_utterance=last_utterance,
                     ).resposne
+                    
+                    # 🔴 清理expert_action输出中的think标签
+                    action = clean_chinese_output(action)
+                    
                 action_type, action_content = self.parse_action(action)
 
         if self.callback_handler is not None:
@@ -146,15 +170,17 @@ class CoStormExpertUtteranceGenerationModule(dspy.Module):
                     topic=topic,
                     question=action_content,
                     mode="brief",
-                    style="conversational and concise",
+                    style="对话性且简洁",
                     callback_handler=self.callback_handler,
                 )
             conversation_turn.claim_to_make = action_content
-            conversation_turn.raw_utterance = grounded_answer.response
+            # 🔴 清理grounded_answer.response中的think标签
+            conversation_turn.raw_utterance = clean_chinese_output(grounded_answer.response)
             conversation_turn.queries = grounded_answer.queries
             conversation_turn.raw_retrieved_info = grounded_answer.raw_retrieved_info
             conversation_turn.cited_info = grounded_answer.cited_info
         elif action_type in ["Original Question", "Information Request"]:
-            conversation_turn.raw_utterance = action_content
+            # 🔴 清理action_content中的think标签
+            conversation_turn.raw_utterance = clean_chinese_output(action_content)
 
         return dspy.Prediction(conversation_turn=conversation_turn)

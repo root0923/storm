@@ -11,44 +11,44 @@ from .collaborative_storm_utils import trim_output_after_hint
 from ...dataclass import KnowledgeNode, KnowledgeBase
 from ...encoder import Encoder
 from ...interface import Information
+from .chinese_utils import clean_chinese_output
 
 
 class InsertInformation(dspy.Signature):
-    """Your job is to insert the given information to the knowledge base. The knowledge base is a tree based data structure to organize the collection information. Each knowledge node contains information derived from themantically similar question or intent.
-    To decide the best placement of the information, you will be navigated in this tree based data structure layer by layer.
-    You will be presented with the question and query leads to ththeis information, and tree structure.
+    """您的任务是将给定信息插入到知识库中。知识库是一个基于树形结构的数据结构，用于组织收集的信息。每个知识节点包含来自主题相似问题或意图的信息。
+    为了决定信息的最佳放置位置，您将在这个基于树的数据结构中逐层导航。
+    您将看到导致此信息的问题和查询，以及树形结构。
 
-    Output should strictly follow one of options presetned below with no other information.
-    - 'insert': to place the information under the current node.
-    - 'step: [child node name]': to step into a specified child node.
-    - 'create: [new child node name]': to create new child node and insert the info under it.
+    输出应严格遵循下面提供的选项之一，不包含其他信息。
+    - 'insert'：将信息放置在当前节点下。
+    - 'step: [子节点名称]'：进入指定的子节点。
+    - 'create: [新子节点名称]'：创建新的子节点并在其下插入信息。
 
-    Example outputs:
+    示例输出：
     - insert
-    - step: node2
-    - create: node3
+    - step: 节点2
+    - create: 节点3
     """
 
     intent = dspy.InputField(
-        prefix="Question and query leads to this info: ", format=str
+        prefix="导致此信息的问题和查询：", format=str
     )
-    structure = dspy.InputField(prefix="Tree structure: \n", format=str)
-    choice = dspy.OutputField(prefix="Choice:\n", format=str)
+    structure = dspy.InputField(prefix="树形结构：\n", format=str)
+    choice = dspy.OutputField(prefix="选择：\n", format=str)
 
 
 class InsertInformationCandidateChoice(dspy.Signature):
-    """Your job is to insert the given information to the knowledge base. The knowledge base is a tree based data structure to organize the collection information. Each knowledge node contains information derived from themantically similar question or intent.
-    You will be presented with the question and query leads to this information, and candidate choices of placement. In these choices, -> denotes parent-child relationship. Note that reasonable may not be in these choices.
+    """您的任务是将给定信息插入到知识库中。知识库是一个基于树形结构的数据结构，用于组织收集的信息。每个知识节点包含来自主题相似问题或意图的信息。
+    您将看到导致此信息的问题和查询，以及候选放置选项。在这些选项中，-> 表示父子关系。请注意，合理的选择可能不在这些选项中。
 
-    If there exists reasonable choice, output "Best placement: [choice index]"; otherwise, output "No reasonable choice".
+    如果存在合理的选择，输出"最佳放置：[选择索引]"；否则，输出"无合理选择"。
     """
 
     intent = dspy.InputField(
-        prefix="Question and query leads to this info: ", format=str
+        prefix="导致此信息的问题和查询：", format=str
     )
-    choices = dspy.InputField(prefix="Candidate placement:\n", format=str)
-    decision = dspy.OutputField(prefix="Decision:\n", format=str)
-
+    choices = dspy.InputField(prefix="候选放置位置：\n", format=str)
+    decision = dspy.OutputField(prefix="决定：\n", format=str)
 
 class InsertInformationModule(dspy.Module):
     def __init__(self, engine: Union[dspy.dsp.LM, dspy.dsp.HFModel], encoder: Encoder):
@@ -72,38 +72,47 @@ class InsertInformationModule(dspy.Module):
     def _get_navigation_choice(
         self, knowledge_node: KnowledgeNode, question: str, query: str
     ):
-        # construct information intent
+        # 构建信息意图
         intent = self._construct_intent(question, query)
-        # construct current kb structure
-        structure = f"Current Node: {knowledge_node.name}\n"
+        # 构建当前知识库结构
+        structure = f"当前节点：{knowledge_node.name}\n"
         child_names = ", ".join(knowledge_node.get_children_names())
         if child_names:
-            structure += f"Child Nodes: {child_names}"
+            structure += f"子节点：{child_names}"
         navigated_path = " -> ".join(knowledge_node.get_path_from_root())
-        structure += f"Path you have nagivated: {navigated_path}"
+        structure += f"您已导航的路径：{navigated_path}"
 
-        # get predicted action
+        # 获取预测动作
         with dspy.settings.context(lm=self.engine):
             predicted_action = self.insert_info(
                 intent=intent, structure=structure
             ).choice
 
-        # parse action
-        cleaned_predicted_action = trim_output_after_hint(
-            predicted_action, "Choice:"
-        ).strip()
+        predicted_action = re.sub(r'Reasoning:.*', '', predicted_action, flags=re.DOTALL)
+        if predicted_action.startswith("insert") or predicted_action.startswith("step") or predicted_action.startswith("create"):
+            cleaned_predicted_action = predicted_action
+        else:
+            text = re.sub(r'<think>.*?</think>', '', predicted_action, flags=re.DOTALL)
+            text = re.sub(r'<think>', '', text)
+            cleaned_predicted_action = re.sub(r'</think>', '', text)
+        
+        if cleaned_predicted_action.startswith("选择"):
+            cleaned_predicted_action = re.sub(r'选择：', '', cleaned_predicted_action)
         cleaned_predicted_action = cleaned_predicted_action.strip("-").strip()
-        if cleaned_predicted_action.startswith("insert"):
+        
+        if cleaned_predicted_action.startswith("insert") or cleaned_predicted_action.startswith("- insert"):
             return "insert", ""
-        elif cleaned_predicted_action.startswith("step:"):
+        elif cleaned_predicted_action.startswith("step") or cleaned_predicted_action.startswith("- step"):
             node_name = trim_output_after_hint(cleaned_predicted_action, "step:")
             return "step", node_name
-        elif cleaned_predicted_action.startswith("create:"):
+        elif cleaned_predicted_action.startswith("create") or cleaned_predicted_action.startswith("- create"):
             node_name = trim_output_after_hint(cleaned_predicted_action, "create:")
             return "create", node_name
+        
         raise Exception(
-            f"Undefined predicted action in knowledge navigation. {predicted_action}"
+            f"知识导航中的未定义预测动作。{predicted_action}/{cleaned_predicted_action}"
         )
+
 
     def layer_by_layer_navigation_placement(
         self,
@@ -163,9 +172,23 @@ class InsertInformationModule(dspy.Module):
             return outlines
 
     def _parse_selected_index(self, string: str):
-        match = re.search(r"\[(\d+)\]", string)
-        if match:
-            return int(match.group(1))
+        # 支持中文输出解析
+        patterns = [
+            r"最佳放置[：:].*?(\d+)",
+            r"Best placement[：:].*?\[(\d+)\]",
+            r"\[(\d+)\]",
+            r"(\d+)"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, string)
+            if match:
+                return int(match.group(1))
+        
+        # 处理"无合理选择"的情况
+        if any(keyword in string for keyword in ["无合理选择", "No reasonable choice"]):
+            return None
+            
         try:
             return int(string.strip())
         except:
@@ -197,9 +220,11 @@ class InsertInformationModule(dspy.Module):
                 intent=self._construct_intent(question=question, query=query),
                 choices=choices_string,
             ).decision
-            decision = trim_output_after_hint(decision, hint="Decision:")
-            if "Best placement:" in decision:
-                decision = trim_output_after_hint(decision, hint="Best placement:")
+            text = re.sub(r'<think>.*?</think>', '', decision, flags=re.DOTALL)
+            text = re.sub(r'<think>', '', text)
+            decision = re.sub(r'</think>', '', text)
+            if "最佳放置：" in decision:
+                decision = trim_output_after_hint(decision, hint="最佳放置：")
                 selected_index = self._parse_selected_index(decision)
                 if selected_index is not None:
                     selected_index = selected_index - 1
@@ -314,20 +339,20 @@ class InsertInformationModule(dspy.Module):
 
 
 class ExpandSection(dspy.Signature):
-    """Your task is to expand a section in the mind map by creating new subsections under the given section.
-    You will be given a list of question and query that are used to collect information.
-    Output should be subsection names where each section should serve as a coherent and themantic organization of information and corresponding citation numbers. These subsection names are preferred to be concise and precise.
-    Output follows the format below:
-    subsection 1
-    subsection 2
-    subsection 3
+    """您的任务是通过在给定章节下创建新的子章节来扩展思维导图中的章节。
+    您将得到一系列用于收集信息的问题和查询。
+    输出应该是子章节名称，每个章节都应该作为信息和相应引用编号的连贯且主题性的组织。这些子章节名称最好简洁准确。
+    输出格式如下：
+    子章节 1
+    子章节 2  
+    子章节 3
+    【注】：输出格式严格遵循上述格式，不要输出其他信息如“子章节 1：”, 直接输出名称。
     """
 
-    section = dspy.InputField(prefix="The section you need to expand: ", format=str)
-    info = dspy.InputField(prefix="The collected information:\n", format=str)
+    section = dspy.InputField(prefix="您需要扩展的章节：", format=str)
+    info = dspy.InputField(prefix="收集的信息：\n", format=str)
     output = dspy.OutputField(
-        prefix="Now provide the expanded subsection names (If there's no need to expand current section as itself serves good organization, then output None):\n",
-        format=str,
+        prefix="请用简体中文列出新的子章节名称：\n", format=str
     )
 
 
@@ -357,6 +382,8 @@ class ExpandNodeModule(dspy.Module):
         node_path = node.get_path_from_root()
         with dspy.settings.context(lm=self.engine, show_guidelines=False):
             output = self.expand_section(section=node_path, info=information).output
+        
+        output = clean_chinese_output(output)
         subsections = []
         if "\n" in output and output != "None":
             subsections = output.split("\n")

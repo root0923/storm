@@ -126,15 +126,15 @@ class WriteOutline(dspy.Module):
 
 
 class WritePageOutline(dspy.Signature):
-    """Write an outline for a Wikipedia page.
-    Here is the format of your writing:
-    1. Use "#" Title" to indicate section title, "##" Title" to indicate subsection title, "###" Title" to indicate subsubsection title, and so on.
-    2. Do not include other information.
-    3. Do not include topic name itself in the outline.
+    """为维基百科页面编写大纲。
+    以下是写作格式：
+    1. 使用 "#" 标题" 表示章节标题，"##" 标题" 表示小节标题，"###" 标题" 表示子小节标题，以此类推。
+    2. 不要包含其他信息。
+    3. 不要在大纲中包含主题名称本身。
     """
 
-    topic = dspy.InputField(prefix="The topic you want to write: ", format=str)
-    outline = dspy.OutputField(prefix="Write the Wikipedia page outline:\n", format=str)
+    topic = dspy.InputField(prefix="您想要编写的大纲主题：", format=str)
+    outline = dspy.OutputField(prefix="编写维基百科页面大纲：\n", format=str)
 
 
 class NaiveOutlineGen(dspy.Module):

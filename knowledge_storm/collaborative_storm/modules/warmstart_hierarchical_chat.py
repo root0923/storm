@@ -17,11 +17,13 @@ from .callback import BaseCallbackHandler
 from .collaborative_storm_utils import _get_answer_question_module_instance
 from .expert_generation import GenerateExpertModule
 from .grounded_question_answering import AnswerQuestionModule
-from ...dataclass import ConversationTurn, KnowledgeBase
+from .chinese_utils import clean_chinese_output
+from ...dataclass import ConversationTurn, KnowledgeBase, KnowledgeNode
 from ...interface import LMConfigs
 from ...logging_wrapper import LoggingWrapper
 from ...storm_wiki.modules.outline_generation import WritePageOutline
 from ...utils import ArticleTextProcessing as AP
+import re
 
 
 if TYPE_CHECKING:
@@ -30,40 +32,45 @@ if TYPE_CHECKING:
 
 class WarmStartModerator(dspy.Signature):
     """
-    You are a moderator in a roundtable discussion. The goal is to chat with multiple experts to discuss the facts and background of the topic to familiarize the audience with the topic.
-    You will be presented with the topic, the history of question you have already asked, and the current expert you are discussing with.
-    Based on these information, generate the next question for the current expert to further the discussion.
+    您是圆桌讨论的主持人。目标是与多位专家聊天，讨论主题的事实和背景，让观众熟悉该主题。
+    您将看到主题、您已经问过的问题历史，以及您正在讨论的当前专家。
+    基于这些信息，为当前专家生成下一个问题以推进讨论。
 
-    The output should only include the next question for the current expert. Do not include any other information or preamble.
+    输出应该只包含给当前专家的下一个问题。不要包含任何其他信息或前言。
     """
 
-    topic = dspy.InputField(prefix="Topic for roundtable discussion: ", format=str)
+    topic = dspy.InputField(prefix="圆桌讨论的主题：", format=str)
     history = dspy.InputField(
-        prefix="Experts you have already interacted with: ", format=str
+        prefix="您已经交流过的专家：", format=str
     )
-    current_expert = dspy.InputField(prefix="Expert you are talking with:", format=str)
+    current_expert = dspy.InputField(prefix="您正在交流的专家：", format=str)
     question = dspy.OutputField(
-        prefix="Next question for the expert you are talking with: ", format=str
+        prefix="给您正在交流的专家的下一个问题：", format=str
     )
 
 
 class SectionToConvTranscript(dspy.Signature):
     """
-    You are given a section of a brief report on a specific topic. Your task is to transform this section into an engaging opening discussion for a roundtable conversation.
-    The goal is to help participants and the audience quickly understand the key information.
-    Both question and answer should be in the tone of roundtable discussion talking to audiences.
+    给您一个关于特定主题的简要报告章节。您的任务是将这个章节转换为圆桌对话的引人入胜的开场讨论。
+    目标是帮助参与者和观众快速理解关键信息。
+    问题和答案都应该用面向观众的圆桌讨论语调。
 
-    Specifically, you need to:
-    1. Generate an engaging question that leverages section name and topic that opens discussion of the content.
-    2. Provide a brief and engaging answer (with all inline citations from original text) derived from the section serving as pointers and avoid too much details.
+    具体而言，您需要：
+    1. 生成一个引人入胜的问题，利用章节名称和主题来开启内容讨论。
+    2. 提供一个简洁而引人入胜的答案（包含原文的所有行内引用），源于该章节，作为指引，避免过多细节。
+    
+    【严格禁止】：
+    - 不得出现<think>标签或英文思考内容
+    - 不得输出内部思考过程
+    - 直接给出问题和答案内容
     """
 
-    topic = dspy.InputField(prefix="topic:", format=str)
-    section_name = dspy.InputField(prefix="section name:", format=str)
-    section_content = dspy.InputField(prefix="section content:", format=str)
-    question = dspy.OutputField(prefix="Now give engaging question only.\nQuestion:")
+    topic = dspy.InputField(prefix="主题：", format=str)
+    section_name = dspy.InputField(prefix="章节名称：", format=str)
+    section_content = dspy.InputField(prefix="章节内容：", format=str)
+    question = dspy.OutputField(prefix="现在只给出引人入胜的问题。\n问题：")
     answer = dspy.OutputField(
-        prefix="Now give engaging answer only with all inline citations from original text.\nAnswer:"
+        prefix="现在只给出引人入胜的答案，包含原文的所有行内引用。\n答案："
     )
 
 
@@ -80,8 +87,9 @@ class ReportToConversation(dspy.Module):
                     section_name=node.get_path_from_root(),
                     section_content=node.synthesize_output,
                 )
-                question = output.question.replace("Question:", "").strip()
-                answer = output.answer.replace("Answer:", "").strip()
+                # 🔴 立即清理LLM输出中的think标签
+                question = clean_chinese_output(output.question.replace("问题：", "").strip())
+                answer = clean_chinese_output(output.answer.replace("答案：", "").strip())
                 return question, answer
 
         conversations = []
@@ -96,9 +104,10 @@ class ReportToConversation(dspy.Module):
             for future in concurrent.futures.as_completed(future_to_node):
                 node = future_to_node[future]
                 question, answer = future.result()
+                
                 conversations.append(
                     ConversationTurn(
-                        role="Background discussion moderator",
+                        role="背景讨论主持人",
                         raw_utterance=question,
                         utterance_type="Original Question",
                         utterance=question,
@@ -110,7 +119,7 @@ class ReportToConversation(dspy.Module):
                 )
                 conversations.append(
                     ConversationTurn(
-                        role="Background discussion expert",
+                        role="背景讨论专家",
                         raw_utterance=answer,
                         utterance_type="Potential Answer",
                         utterance=answer,
@@ -165,14 +174,18 @@ class WarmStartConversation(dspy.Module):
         return gen_expert_output.experts, background_seeking_dialogue
 
     def get_background_info(self, topic: str):
-        question = f"Background information about {topic}"
+        question = f"关于{topic}的背景信息"
+    
         answer = self.answer_question_module(
-            topic=topic, question=question, mode="extensive", style="conversational"
+            topic=topic, question=question, mode="extensive", style="对话性"
         )
 
+        # 🟢 清理think标签和英文思考内容
+        cleaned_response = clean_chinese_output(answer.response)
+
         return ConversationTurn(
-            role="Default Background Researcher",
-            raw_utterance=answer.response,
+            role="背景信息研究员",
+            raw_utterance=cleaned_response,
             utterance_type="Questioning",
             claim_to_make=question,
             queries=answer.queries,
@@ -194,7 +207,15 @@ class WarmStartConversation(dspy.Module):
 
         # hierarchical chat: chat with one expert. Generate question, get answer
         def process_expert(expert):
-            expert_name, expert_descriptoin = expert.split(":")
+            # 支持中英文冒号分割
+            colon_pattern = r'[：:]'
+            if re.search(colon_pattern, expert):
+                parts = re.split(colon_pattern, expert, 1)
+                expert_name = parts[0].strip()
+                expert_description = parts[1].strip() if len(parts) > 1 else ""
+            else:
+                expert_name = expert.strip()
+                expert_description = ""
             for idx in range(self.max_turn_per_experts):
                 with self.logging_wrapper.log_event(
                     f"warm start, perspective guided QA: expert {expert_name}; turn {idx + 1}"
@@ -208,16 +229,22 @@ class WarmStartConversation(dspy.Module):
                             question = self.ask_question(
                                 topic=topic, history=history, current_expert=expert
                             ).question
+                            # 🟢 清理think标签和英文思考内容
+                            question = clean_chinese_output(question)
                         answer = self.answer_question_module(
                             topic=topic,
                             question=question,
                             mode="brief",
-                            style="conversational",
+                            style="对话性",
                         )
+                        
+                        # 🟢 清理think标签和英文思考内容
+                        cleaned_response = clean_chinese_output(answer.response)
+                        
                         conversation_turn = ConversationTurn(
                             role=expert,
                             claim_to_make=question,
-                            raw_utterance=answer.response,
+                            raw_utterance=cleaned_response,
                             utterance_type="Support",
                             queries=answer.queries,
                             raw_retrieved_info=answer.raw_retrieved_info,
@@ -257,21 +284,21 @@ class WarmStartConversation(dspy.Module):
 
 
 class GenerateWarmStartOutline(dspy.Signature):
-    """Generate a outline of the wikipedia-like report from a roundtable discussion. You will be presented discussion points in the conversation and corresponding queries.
-    You will be given a draft outline which you can borrow some inspiration. Do not include sections that are not mentioned in the given discussion history.
-    Use "#" to denote section headings, "##" to denote subsection headings, and so on.
-     Follow these guidelines:
-     1. Use "#" for section titles, "##" for subsection titles, "###" for subsubsection titles, and so on.
-     2. Do not include any additional information.
-     3. Exclude the topic name from the outline.
-     The organization of outline should adopt wikiepdia style.
+    """根据圆桌讨论生成类维基百科报告的大纲。您将看到对话中的讨论要点和相应查询。
+    您将获得一个草案大纲，可以从中获得一些灵感。不要包含给定讨论历史中未提及的章节。
+    使用"#"表示章节标题，"##"表示子章节标题，依此类推。
+    遵循以下准则：
+    1. 使用"#"表示章节标题，"##"表示子章节标题，"###"表示子子章节标题，依此类推。
+    2. 不要包含任何附加信息。
+    3. 从大纲中排除主题名称。
+    大纲的组织应采用维基百科风格。
     """
 
-    topic = dspy.InputField(prefix="The topic discussed: ", format=str)
-    draft = dspy.InputField(prefix="Draft outline you can reference to: ", format=str)
-    conv = dspy.InputField(prefix="Discussion history:\n", format=str)
+    topic = dspy.InputField(prefix="讨论的主题：", format=str)
+    draft = dspy.InputField(prefix="您可以参考的草案大纲：", format=str)
+    conv = dspy.InputField(prefix="讨论历史：\n", format=str)
     outline = dspy.OutputField(
-        prefix='Write the conversation outline (Use "#" Title" to indicate section title, "##" Title" to indicate subsection title, ...):\n',
+        prefix='编写对话大纲（使用"# 标题"表示章节标题，"## 标题"表示子章节标题...）：\n',
         format=str,
     )
 
@@ -288,9 +315,9 @@ class GenerateWarmStartOutlineModule(dspy.Module):
             focus = turn.claim_to_make
             queries = turn.queries
             queries_string = "\n\t".join(
-                f"Query {idx + 1}: {query}" for idx, query in enumerate(queries)
+                f"查询 {idx + 1}：{query}" for idx, query in enumerate(queries)  # 🟢 中文化
             )
-            string = f"Discussion focus {len(context) + 1}: {focus}\n\t{queries_string}"
+            string = f"讨论焦点 {len(context) + 1}：{focus}\n\t{queries_string}"  # 🟢 中文化
             context.append(string)
         return "\n".join(context)
 
@@ -301,6 +328,8 @@ class GenerateWarmStartOutlineModule(dspy.Module):
     def forward(self, topic: str, conv: List[ConversationTurn]):
         discussion_history = self.extract_questions_and_queries(conv)
         draft_outline = self.get_draft_outline(topic=topic)
+        # 🟢 清理think标签和英文思考内容
+        draft_outline = clean_chinese_output(draft_outline)
         with dspy.settings.context(lm=self.engine):
             outline = self.gen_outline(
                 topic=topic, draft=draft_outline, conv=discussion_history

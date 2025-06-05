@@ -18,55 +18,58 @@ from .collaborative_storm_utils import (
 )
 from ...dataclass import ConversationTurn, KnowledgeBase
 from ...interface import Information
+from .chinese_utils import clean_chinese_output
+import re
 
 
 class KnowledgeBaseSummmary(dspy.Signature):
-    """Your job is to give brief summary of what's been discussed in a roundtable conversation. Contents are themantically organized into hierarchical sections.
-    You will be presented with these sections where "#" denotes level of section.
+    """您的任务是对圆桌对话中已讨论的内容给出简要总结。内容按主题分层组织成层次化章节。
+    您将看到这些章节，其中"#"表示章节级别。
     """
 
-    topic = dspy.InputField(prefix="topic: ", format=str)
-    structure = dspy.InputField(prefix="Tree structure: \n", format=str)
-    output = dspy.OutputField(prefix="Now give brief summary:\n", format=str)
+    topic = dspy.InputField(prefix="主题：", format=str)
+    structure = dspy.InputField(prefix="树形结构：\n", format=str)
+    output = dspy.OutputField(prefix="现在给出简要总结：\n", format=str)
 
 
 class ConvertUtteranceStyle(dspy.Signature):
     """
-    You are an invited speaker in the round table conversation.
-    Your task is to make the question or the response more conversational and engaging to facilicate the flow of conversation.
-    Note that this is ongoing conversation so no need to have welcoming and concluding words. Previous speaker utterance is provided only for making the conversation more natural.
-    Note that do not hallucinate and keep the citation index like [1] as it is. Also,
+    您是圆桌对话中的受邀发言人。
+    您的任务是让问题或回应更具对话性和吸引力，以促进对话的流畅进行。
+    注意这是正在进行的对话，所以无需开场白和结束语。提供前一位发言人的发言仅为了让对话更自然。
+    注意不要编造信息，并保持引用索引如[1]不变。
     """
 
-    expert = dspy.InputField(prefix="You are inivited as: ", format=str)
+    expert = dspy.InputField(prefix="您受邀的身份：", format=str)
     action = dspy.InputField(
-        prefix="You want to contribute to conversation by: ", format=str
+        prefix="您想通过以下方式为对话做出贡献：", format=str
     )
-    prev = dspy.InputField(prefix="Previous speaker said: ", format=str)
+    prev = dspy.InputField(prefix="前一位发言人说：", format=str)
     content = dspy.InputField(
-        prefix="Question or response you want to say: ", format=str
+        prefix="您想说的问题或回应：", format=str
     )
     utterance = dspy.OutputField(
-        prefix="Your utterance (keep the information as much as you can with citations, prefer shorter answers without loss of information): ",
+        prefix="您的发言（尽可能保留信息并附上引用，在不丢失信息的前提下偏向简短回答）：",
         format=str,
     )
 
 
+
 class GroundedQuestionGeneration(dspy.Signature):
-    """Your job is to find next discussion focus in a roundtable conversation. You will be given previous conversation summary and some information that might assist you discover new discussion focus.
-    Note that the new discussion focus should bring new angle and perspective to the discussion and avoid repetition. The new discussion focus should be grounded on the available information and push the boundaries of the current discussion for broader exploration.
-    The new discussion focus should have natural flow from last utterance in the conversation.
-    Use [1][2] in line to ground your question.
+    """您的任务是为圆桌对话找到下一个讨论焦点。您将得到之前的对话总结和一些可能帮助您发现新讨论焦点的信息。
+    注意新的讨论焦点应该为讨论带来新的角度和观点，避免重复。新的讨论焦点应该基于可用信息，并推动当前讨论的边界以进行更广泛的探索。
+    新的讨论焦点应该与对话中的最后一次发言有自然的连接。
+    使用[1][2]等行内引用来支撑您的问题。
     """
 
-    topic = dspy.InputField(prefix="topic: ", format=str)
-    summary = dspy.InputField(prefix="Discussion history: \n", format=str)
-    information = dspy.InputField(prefix="Available information: \n", format=str)
+    topic = dspy.InputField(prefix="主题：", format=str)
+    summary = dspy.InputField(prefix="讨论历史：\n", format=str)
+    information = dspy.InputField(prefix="可用信息：\n", format=str)
     last_utterance = dspy.InputField(
-        prefix="Last utterance in the conversation: \n", format=str
+        prefix="对话中的最后一次发言：\n", format=str
     )
     output = dspy.OutputField(
-        prefix="Now give next discussion focus in the format of one sentence question:\n",
+        prefix="现在用一句话问题的格式给出下一个讨论焦点：\n",
         format=str,
     )
 
@@ -97,12 +100,26 @@ class GroundedQuestionGenerationModule(dspy.Module):
                 information=information,
                 last_utterance=last_utterance,
             ).output
+            
+            # 🔴 清理raw_utterance中的think标签
+            raw_utterance = clean_chinese_output(raw_utterance, role_context="Moderator")
+            
+            if '**' in raw_utterance:
+                matches = re.findall(r'\*\*(.*?)\*\*', raw_utterance, flags=re.DOTALL)
+                raw_utterance = ' '.join(m.strip() for m in matches)
             utterance = self.polish_style(
-                expert="Roundtable conversation moderator",
-                action="Raising a new question by natural transit from previous utterance.",
+                expert="圆桌对话主持人",
+                action="从上一次发言自然过渡到新问题。",
                 prev=keep_first_and_last_paragraph(last_utterance),
                 content=raw_utterance,
             ).utterance
+            
+            # 🔴 清理polished utterance中的think标签
+            utterance = clean_chinese_output(utterance, role_context="Moderator")
+            if '**' in raw_utterance:
+                matches = re.findall(r'\*\*(.*?)\*\*', utterance, flags=re.DOTALL)
+                utterance = ' '.join(m.strip() for m in matches)
+            
             cited_searched_results = extract_cited_storm_info(
                 response=utterance, index_to_storm_info=index_to_information_mapping
             )

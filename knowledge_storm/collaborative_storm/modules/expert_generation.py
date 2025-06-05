@@ -1,42 +1,44 @@
 import dspy
 import re
-from typing import Union
+from typing import Union, List
+from .chinese_utils import clean_chinese_expert_output, clean_chinese_output
+from ...logging_wrapper import LoggingWrapper
 
 
 class GenerateExpertGeneral(dspy.Signature):
-    """You need to select a group of diverse experts who will be suitable to be invited to a roundtable discussion on the given topic.
-    Each expert should represent a different perspective, role, or affiliation related to this topic.
-    You can use the background information provided about the topic for inspiration. For each expert, add a description of their expertise and what they will focus on during the discussion.
-    No need to include speakers name in the output.
-    Strictly follow format below:
-    1. [speaker 1 role]: [speaker 1 short description]
-    2. [speaker 2 role]: [speaker 2 short description]
+    """您需要选择一组多样化的专家，适合受邀参加关于给定主题的圆桌讨论。
+    每位专家应该代表与该主题相关的不同观点、角色或立场。
+    您可以使用提供的主题背景信息作为灵感。为每位专家添加其专业知识的描述以及他们在讨论中的重点。
+    输出中无需包含发言人姓名。
+    严格按照以下格式：
+    1. [发言人1角色]：[发言人1简短描述]
+    2. [发言人2角色]：[发言人2简短描述]
     """
 
-    topic = dspy.InputField(prefix="Topic of interest:", format=str)
+    topic = dspy.InputField(prefix="关注的主题：", format=str)
     background_info = dspy.InputField(
-        prefix="Background information about the topic:\n", format=str
+        prefix="关于主题的背景信息：\n", format=str
     )
-    topN = dspy.InputField(prefix="Number of speakers needed: ", format=str)
+    topN = dspy.InputField(prefix="需要的发言人数量：", format=str)
     experts = dspy.OutputField(format=str)
 
 
 class GenerateExpertWithFocus(dspy.Signature):
     """
-    You need to select a group of speakers who will be suitable to have roundtable discussion on the [topic] of specific [focus].
-    You may consider inviting speakers having opposite stands on the topic; speakers representing different interest parties; Ensure that the selected speakers are directly connected to the specific context and scenario provided.
-    For example, if the discussion focus is about a recent event at a specific university, consider inviting students, faculty members, journalists covering the event, university officials, and local community members.
-    Use the background information provided about the topic for inspiration. For each speaker, add a description of their interests and what they will focus on during the discussion.
-    No need to include speakers name in the output.
-    Strictly follow format below:
-    1. [speaker 1 role]: [speaker 1 short description]
-    2. [speaker 2 role]: [speaker 2 short description]
+    您需要选择一组适合就特定焦点进行圆桌讨论的发言人。
+    您可以考虑邀请在该主题上持相反立场的发言人；代表不同利益方的发言人；确保所选发言人与提供的特定背景和场景直接相关。
+    例如，如果讨论焦点是关于某特定大学的近期事件，可以考虑邀请学生、教职员工、报道该事件的记者、大学官员和当地社区成员。
+    使用提供的主题背景信息作为灵感。为每位发言人添加其兴趣的描述以及他们在讨论中的重点。
+    输出中无需包含发言人姓名。
+    严格按照以下格式：
+    1. [发言人1角色]：[发言人1简短描述]
+    2. [发言人2角色]：[发言人2简短描述]
     """
 
-    topic = dspy.InputField(prefix="Topic of interest:", format=str)
-    background_info = dspy.InputField(prefix="Background information:\n", format=str)
-    focus = dspy.InputField(prefix="Discussion focus: ", format=str)
-    topN = dspy.InputField(prefix="Number of speakers needed: ", format=str)
+    topic = dspy.InputField(prefix="关注的主题：", format=str)
+    background_info = dspy.InputField(prefix="背景信息：\n", format=str)
+    focus = dspy.InputField(prefix="讨论焦点：", format=str)
+    topN = dspy.InputField(prefix="需要的发言人数量：", format=str)
     experts = dspy.OutputField(format=str)
 
 
@@ -59,25 +61,30 @@ class GenerateExpertModule(dspy.Module):
         self, topic: str, num_experts: int, background_info: str = "", focus: str = ""
     ):
         with dspy.settings.context(lm=self.engine, show_guidelines=False):
-            if not focus:
-                output = self.generate_expert_general(
-                    topic=topic, background_info=background_info, topN=num_experts
-                ).experts
-            else:
-                background_info = self.trim_background(
-                    background=background_info, max_words=100
-                )
-                output = self.generate_expert_w_focus(
-                    topic=topic,
-                    background_info=background_info,
-                    focus=focus,
-                    topN=num_experts,
-                ).experts
-        output = output.replace("*", "").replace("[", "").replace("]", "")
-        expert_list = []
-        for s in output.split("\n"):
-            match = re.search(r"\d+\.\s*(.*)", s)
-            if match:
-                expert_list.append(match.group(1))
-        expert_list = [expert.strip() for expert in expert_list if expert.strip()]
+            while True:
+                if not focus:
+                    output = self.generate_expert_general(
+                        topic=topic, background_info=background_info, topN=num_experts
+                    ).experts
+                else:
+                    background_info = self.trim_background(
+                        background=background_info, max_words=100
+                    )
+                    output = self.generate_expert_w_focus(
+                        topic=topic,
+                        background_info=background_info,
+                        focus=focus,
+                        topN=num_experts,
+                    ).experts
+                
+                text = re.sub(r'<think>.*?</think>', '', output, flags=re.DOTALL)
+                text = re.sub(r'<think>', '', text)
+                output = re.sub(r'</think>', '', text)
+                
+                # 使用新的中文处理函数
+                expert_list = clean_chinese_expert_output(output)
+                
+                if expert_list:
+                    break
+        
         return dspy.Prediction(experts=expert_list, raw_output=output)

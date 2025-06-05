@@ -16,6 +16,7 @@ from ...dataclass import ConversationTurn, KnowledgeBase
 from ...encoder import Encoder
 from ...interface import Agent, Information, LMConfigs
 from ...logging_wrapper import LoggingWrapper
+from .chinese_utils import clean_chinese_output
 
 if TYPE_CHECKING:
     from ..engine import RunnerArgument
@@ -257,7 +258,7 @@ class Moderator(Agent):
         for conv_turn in reversed(conversation_history):
             if len(considered_conv_turn) == last_n_conv_turn:
                 break
-            if conv_turn.utterance_type == "Questioning":
+            if conv_turn.utterance_type == 'Questioning':
                 break
             considered_conv_turn.append(conv_turn)
             batch_snippets.extend(
@@ -304,9 +305,9 @@ class Moderator(Agent):
             )
         return ConversationTurn(
             role=self.role_name,
-            raw_utterance=generated_question.raw_utterance,
+            raw_utterance=clean_chinese_output(generated_question.raw_utterance),
             utterance_type="Original Question",
-            utterance=generated_question.utterance,
+            utterance=clean_chinese_output(generated_question.utterance),
             cited_info=generated_question.cited_info,
         )
 
@@ -346,7 +347,7 @@ class PureRAGAgent(Agent):
             topic=self.topic,
             question=question,
             mode="brief",
-            style="conversational and concise",
+            style="对话性且简洁",
         )
         conversation_turn = ConversationTurn(
             role=self.role_name, raw_utterance="", utterance_type="Potential Answer"

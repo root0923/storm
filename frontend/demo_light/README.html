@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>STORM Minimal User Interface</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="storm-minimal-user-interface">STORM Minimal User Interface</h1>
+<p>This is a minimal user interface for <code>STORMWikiRunner</code> which includes the following features:</p>
+<ol>
+<li>Allowing user to create a new article through the &quot;Create New Article&quot; page.</li>
+<li>Showing the intermediate steps of STORMWikiRunner in real-time when creating an article.</li>
+<li>Displaying the written article and references side by side.</li>
+<li>Allowing user to view previously created articles through the &quot;My Articles&quot; page.</li>
+</ol>
+<p align="center">
+  <img src="file:///c:\broadtech\code\storm\frontend\demo_light\assets\create_article.jpg" style="width: 70%; height: auto;">
+</p>
+<p align="center">
+  <img src="file:///c:\broadtech\code\storm\frontend\demo_light\assets\article_display.jpg" style="width: 70%; height: auto;">
+</p>
+<h2 id="setup">Setup</h2>
+<ol>
+<li>Make sure you have installed <code>knowledge-storm</code> or set up the source code correctly.</li>
+<li>Install additional packages required by the user interface:<pre><code class="language-bash">pip install -r requirements.txt
+</code></pre>
+</li>
+<li>Make sure you set up the API keys following the instructions in the main README file. Create a copy of <code>secrets.toml</code> and place it under <code>.streamlit/</code>.</li>
+<li>Run the following command to start the user interface:<pre><code class="language-bash">streamlit run storm.py
+</code></pre>
+The user interface will create a <code>DEMO_WORKING_DIR</code> directory in the current directory to store the outputs.</li>
+</ol>
+<h2 id="customization">Customization</h2>
+<p>You can customize the <code>STORMWikiRunner</code> powering the user interface according to <a href="https://github.com/stanford-oval/storm?tab=readme-ov-file#customize-storm">the guidelines</a> in the main README file.</p>
+<p>The <code>STORMWikiRunner</code> is initialized in <code>set_storm_runner()</code> in <a href="demo_util.py">demo_util.py</a>. You can change <code>STORMWikiRunnerArguments</code>, <code>STORMWikiLMConfigs</code>, or use a different retrieval model according to your need.</p>
+
+            
+            
+        </body>
+        </html>
