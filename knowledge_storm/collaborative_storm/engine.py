@@ -167,12 +167,30 @@ class CollaborativeStormLMConfigs(LMConfigs):
             if "_lm" in attr_name and hasattr(
                 getattr(self, attr_name), "get_usage_and_reset"
             ):
-                usage = getattr(self, attr_name).get_usage_and_reset()
-                if any(
-                    value["prompt_tokens"] != 0 or value["completion_tokens"] != 0
-                    for value in usage.values()
-                ):
-                    lm_usage[attr_name] = usage
+                try:
+                    usage = getattr(self, attr_name).get_usage_and_reset()
+                    # 验证usage是字典类型
+                    if not isinstance(usage, dict):
+                        continue
+                    
+                    # 安全地检查token使用情况
+                    has_usage = False
+                    for model_name, tokens in usage.items():
+                        if isinstance(tokens, dict):
+                            prompt_tokens = tokens.get("prompt_tokens", 0)
+                            completion_tokens = tokens.get("completion_tokens", 0)
+                            if prompt_tokens != 0 or completion_tokens != 0:
+                                has_usage = True
+                                break
+                    
+                    if has_usage:
+                        lm_usage[attr_name] = usage
+                        
+                except Exception as e:
+                    # 静默跳过有问题的LM，避免整个系统崩溃
+                    print(f"警告: 无法获取 {attr_name} 的使用统计: {e}")
+                    continue
+                    
         return lm_usage
 
     def to_dict(self):
@@ -261,8 +279,13 @@ class RunnerArgument:
         metadata={"help": "If True, disable moderator."},
     )
     disable_multi_experts: bool = field(
-        default=False,
-        metadata={"help": "If True, disable moderator."},
+    default=False,
+    metadata={"help": "If True, disable moderator."},
+    )
+    # 新增：DeepSearcher相关配置
+    deepsearcher_api_url: str = field(
+        default="http://localhost:8500",
+        metadata={"help": "DeepSearcher API的基础URL"},
     )
     rag_only_baseline_mode: bool = field(
         default=False,

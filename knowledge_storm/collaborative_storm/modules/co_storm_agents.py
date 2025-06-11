@@ -71,6 +71,7 @@ class CoStormExpert(Agent):
                 runner_argument=self.runner_argument,
                 logging_wrapper=self.logging_wrapper,
                 rm=rm,
+                deepsearcher_api_url=self.runner_argument.deepsearcher_api_url,
             ),
             logging_wrapper=self.logging_wrapper,
             callback_handler=self.callback_handler,
@@ -340,6 +341,7 @@ class PureRAGAgent(Agent):
             runner_argument=self.runner_argument,
             logging_wrapper=self.logging_wrapper,
             rm=rm,
+            deepsearcher_api_url=self.runner_argument.deepsearcher_api_url,
         )
 
     def _gen_utterance_from_question(self, question: str):

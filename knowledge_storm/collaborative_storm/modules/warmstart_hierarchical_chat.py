@@ -286,11 +286,17 @@ class WarmStartConversation(dspy.Module):
 class GenerateWarmStartOutline(dspy.Signature):
     """根据圆桌讨论生成类维基百科报告的大纲。您将看到对话中的讨论要点和相应查询。
     您将获得一个草案大纲，可以从中获得一些灵感。不要包含给定讨论历史中未提及的章节。
-    使用"#"表示章节标题，"##"表示子章节标题，依此类推。
-    遵循以下准则：
+    
+    重要说明：
+    - 讨论历史是以"问题："开头的对话记录，不是章节标题
+    - 您需要根据这些讨论内容来生成简洁的章节标题
+    - 章节标题应该简洁明了，如"概述"、"技术架构"、"应用场景"等
+    
+    格式要求：
     1. 使用"#"表示章节标题，"##"表示子章节标题，"###"表示子子章节标题，依此类推。
-    2. 不要包含任何附加信息。
+    2. 不要包含任何附加信息或解释性文字。
     3. 从大纲中排除主题名称。
+    4. 章节标题要简洁，避免冗长的描述性语句。
     大纲的组织应采用维基百科风格。
     """
 
@@ -298,7 +304,7 @@ class GenerateWarmStartOutline(dspy.Signature):
     draft = dspy.InputField(prefix="您可以参考的草案大纲：", format=str)
     conv = dspy.InputField(prefix="讨论历史：\n", format=str)
     outline = dspy.OutputField(
-        prefix='编写对话大纲（使用"# 标题"表示章节标题，"## 标题"表示子章节标题...）：\n',
+        prefix='请生成简洁的维基百科风格大纲（使用"# 标题"表示章节标题，"## 标题"表示子章节标题...）：\n',
         format=str,
     )
 
@@ -314,12 +320,12 @@ class GenerateWarmStartOutlineModule(dspy.Module):
         for turn in conv:
             focus = turn.claim_to_make
             queries = turn.queries
-            queries_string = "\n\t".join(
-                f"查询 {idx + 1}：{query}" for idx, query in enumerate(queries)  # 🟢 中文化
+            queries_string = "\n".join(
+                f"  - {query}" for query in queries  # 使用更清晰的格式
             )
-            string = f"讨论焦点 {len(context) + 1}：{focus}\n\t{queries_string}"  # 🟢 中文化
+            string = f"问题：{focus}\n相关查询：\n{queries_string}"  # 简化格式
             context.append(string)
-        return "\n".join(context)
+        return "\n\n".join(context)  # 用双换行分隔不同的问题
 
     def get_draft_outline(self, topic: str):
         with dspy.settings.context(lm=self.engine):
@@ -358,6 +364,7 @@ class WarmStartModule:
                 runner_argument=runner_argument,
                 logging_wrapper=logging_wrapper,
                 rm=rm,
+                deepsearcher_api_url=runner_argument.deepsearcher_api_url,
             ),
             max_num_experts=runner_argument.warmstart_max_num_experts,
             max_turn_per_experts=runner_argument.warmstart_max_turn_per_experts,

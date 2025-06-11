@@ -245,6 +245,7 @@ def _get_answer_question_module_instance(
     runner_argument: "RunnerArgument",
     logging_wrapper: LoggingWrapper,
     rm: Optional[dspy.Retrieve] = None,
+    deepsearcher_api_url: str = "http://localhost:8500",
 ):
     from .grounded_question_answering import AnswerQuestionModule
 
@@ -258,4 +259,5 @@ def _get_answer_question_module_instance(
         max_search_queries=runner_argument.max_search_queries,
         question_answering_lm=lm_config.question_answering_lm,
         logging_wrapper=logging_wrapper,
+        deepsearcher_api_url=deepsearcher_api_url,
     )

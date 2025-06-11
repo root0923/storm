@@ -1,3 +1,11 @@
+import sys
+import os
+
+# 添加storm项目根目录到Python路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+storm_root = os.path.dirname(os.path.dirname(current_dir))  # 回到storm根目录
+sys.path.insert(0, storm_root)
+
 from knowledge_storm.collaborative_storm.engine import CollaborativeStormLMConfigs, RunnerArgument, CoStormRunner
 from knowledge_storm.lm import DeepSeekModel
 from knowledge_storm.logging_wrapper import LoggingWrapper
@@ -7,12 +15,68 @@ from knowledge_storm.collaborative_storm.modules.callback import (
 )
 from knowledge_storm.encoder import Encoder
 from config import MODEL_CONFIG, SEARCH_CONFIG, EMBEDDING_CONFIG
-import os
 import json
 import re
 import logging
-import sys
 from datetime import datetime
+import requests
+import time
+
+# 数据导入相关配置
+API_BASE_URL = "http://localhost:8500"
+
+def load_data_to_deepsearcher():
+    """将data文件夹中的数据加载到DeepSearcher向量数据库"""
+    
+    # # 数据文件路径
+    # data_dir = os.path.join(current_dir, "data")
+        
+    # # 例子: 导入milvus相关文档
+    # load_config = {
+    #     "paths": data_dir,
+    #     "collection_name": "milvus_docs",
+    #     "collection_description": "Milvus向量数据库文档",
+    #     "batch_size": 10  # 阿里云API限制batch_size不能超过10
+    # }
+    
+    # try:
+    #     response = requests.post(f"{API_BASE_URL}/load-files/", 
+    #                             json=load_config, 
+    #                             timeout=300)
+    #     if response.status_code == 200:
+    #         print("✅ 本地文件加载成功")
+    #     else:
+    #         print(f"❌ 本地文件加载失败: {response.text}")
+    # except Exception as e:
+    #     print(f"加载本地文件时出错: {e}")
+
+    # # 加载网页
+    # websites_to_load = [
+    #         "https://milvus.io/docs/overview.md",
+    #         "https://milvus.io/docs/install_standalone-docker.md",
+    #         "https://zilliz.com/what-is-milvus"
+    #     ]
+    
+    # load_config = {
+    #     "urls": websites_to_load,
+    #     "collection_name": "milvus_docs_url",
+    #     "collection_description": "Milvus向量数据库文档",
+    #     "batch_size": 10  # 阿里云API限制batch_size不能超过10
+    # }
+
+    # try:
+    #     response = requests.post(f"{API_BASE_URL}/load-website/", 
+    #                             json=load_config, 
+    #                             timeout=300)
+    #     if response.status_code == 200:
+    #         print("✅ 网页加载成功")
+    #     else:  
+    #         print(f"❌ 网页加载失败: {response.text}")
+    # except Exception as e:
+    #     print(f"加载网页时出错: {e}")
+    
+
+    return True
 
 class RealTimeFileHandler(logging.FileHandler):
     def __init__(self, filename, mode='a', encoding='utf-8', delay=False):
@@ -65,12 +129,27 @@ lm_config.set_warmstart_outline_gen_lm(warmstart_outline_gen_lm)
 lm_config.set_question_asking_lm(question_asking_lm)
 lm_config.set_knowledge_base_lm(knowledge_base_lm)
 
-
 # Check out the Co-STORM's RunnerArguments class for more configurations.
+# 首先加载数据到DeepSearcher
+print("="*60)
+print("开始初始化DeepSearcher数据...")
+print("="*60)
+
+data_loaded = load_data_to_deepsearcher()
+if not data_loaded:
+    print("数据加载失败，但程序将继续运行（仅使用网络查询）")
+    print("如需使用本地数据，请先启动DeepSearcher服务并重新运行")
+
+print("="*60)
 topic = input("请输入话题: ")
 
+# 创建日志目录（如果不存在）
+log_dir = os.path.join(storm_root, 'log')
+os.makedirs(log_dir, exist_ok=True)
+
 # 重新配置完整的日志记录系统
-file_handler = RealTimeFileHandler(f'../../log/{topic}.log', mode='a', encoding='utf-8')
+log_file_path = os.path.join(log_dir, f'{topic}.log')
+file_handler = RealTimeFileHandler(log_file_path, mode='a', encoding='utf-8')
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 

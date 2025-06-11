@@ -8,6 +8,7 @@ from .collaborative_storm_utils import (
     extract_cited_storm_info,
     separate_citations,
 )
+from .deepsearcher_retriever import DeepSearcherRetriever
 from ...logging_wrapper import LoggingWrapper
 from ...utils import ArticleTextProcessing
 from ...interface import Information
@@ -64,6 +65,7 @@ class AnswerQuestionModule(dspy.Module):
         max_search_queries: int,
         question_answering_lm: Union[dspy.dsp.LM, dspy.dsp.HFModel],
         logging_wrapper: LoggingWrapper,
+        deepsearcher_api_url: str = "http://localhost:8500",
     ):
         super().__init__()
         self.question_answering_lm = question_answering_lm
@@ -72,6 +74,11 @@ class AnswerQuestionModule(dspy.Module):
         self.retriever = retriever
         self.max_search_queries = max_search_queries
         self.logging_wrapper = logging_wrapper
+        
+        # 初始化DeepSearcher检索器
+        self.deepsearcher_retriever = DeepSearcherRetriever(
+            api_base_url=deepsearcher_api_url
+        )
 
     def retrieve_information(self, topic, question):
         # decompose question to queries
@@ -122,6 +129,8 @@ class AnswerQuestionModule(dspy.Module):
             queries = cleaned_queries[:self.max_search_queries]
         
         self.logging_wrapper.add_query_count(count=len(queries))
+        
+        # 执行原始的storm检索
         with self.logging_wrapper.log_event(
             f"AnswerQuestionModule.retriever.retrieve ({hash(question)})"
         ):
@@ -129,10 +138,33 @@ class AnswerQuestionModule(dspy.Module):
             searched_results: List[Information] = self.retriever.retrieve(
                 list(set(queries)), exclude_urls=[]
             )
+        
         # update storm information meta to include the question
         for storm_info in searched_results:
             storm_info.meta["question"] = question
-        return queries, searched_results
+        
+        # 新增：执行DeepSearcher检索
+        with self.logging_wrapper.log_event(
+            f"AnswerQuestionModule.deepsearcher_retriever.retrieve ({hash(question)})"
+        ):
+            deepsearcher_results: List[Information] = self.deepsearcher_retriever.retrieve(
+                question, exclude_urls=[]
+            )
+        
+        for deep_info in deepsearcher_results:
+            queries.append(deep_info.meta["query"])
+            
+        combined_results = []
+        
+        # 先添加storm搜索结果
+        for info in searched_results:
+            combined_results.append(info)
+        
+        # 再添加deepsearcher结果
+        for info in deepsearcher_results:
+            combined_results.append(info)
+
+        return queries, combined_results
 
     def forward(
         self,
@@ -164,13 +196,13 @@ class AnswerQuestionModule(dspy.Module):
             callback_handler.on_expert_information_collection_start()
         queries, searched_results = self.retrieve_information(
             topic=topic, question=question
-        )
+        ) 
         if callback_handler is not None:
             callback_handler.on_expert_information_collection_end(searched_results)
         # format information string for answer generation
         info_text, index_to_information_mapping = format_search_results(
             searched_results, mode=mode
-        )
+        ) # 最大字数限定为1000
         answer = "Sorry, there is insufficient information to answer the question."
         # generate answer to the question
         if info_text:
